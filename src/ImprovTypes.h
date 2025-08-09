@@ -69,6 +69,7 @@ struct ImprovCommand {
 enum ChipFamily : uint8_t {
   CF_ESP32,
   CF_ESP32_C3,
+  CF_ESP32_C6,
   CF_ESP32_S2,
   CF_ESP32_S3,
   CF_ESP8266
