@@ -28,6 +28,7 @@ void onImprovWiFiErrorCb(ImprovTypes::Error err) {
 void onImprovWiFiConnectedCb(const char *ssid, const char *password) {
     // Save ssid and password here
     log_i("wifi connected %s %s", ssid, password);
+    saveWiFiCredentials( ssid, password);
     server.begin();
     blinkLed(100, 3);
 }
@@ -46,7 +47,6 @@ bool connectWifi(const char *ssid, const char *password) {
     while (!improvBLE.isConnected()) {
         blinkLed(500, 1);
     }
-    saveWiFiCredentials( ssid, password);
     return true;
 }
 
