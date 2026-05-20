@@ -112,9 +112,8 @@ void loop() {
 
 ## Documentation
 
-- Serial transport: [ImprovWiFiLibrary.md](ImprovWiFiLibrary.md).
-- BLE transport: [ImprovWiFiBLE.md](ImprovWiFiBLE.md).
-
+- Serial transport: [ImprovWiFiLibrary](docs/ImprovWiFiLibrary.md)
+- BLE transport: [ImprovWiFiBLE](docs/ImprovWiFiBLE.md)
 
 ## License
 

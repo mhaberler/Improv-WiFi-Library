@@ -101,7 +101,7 @@ void loop() {
 
 void handleHttpRequest() {
 
-    WiFiClient client = server.available();
+    WiFiClient client = server.accept();
     if (client) {
         blinkLed(100, 1);
         memset(linebuf, 0, sizeof(linebuf));
