@@ -32,8 +32,6 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     BLEDevice::init(device_name_.c_str());
 #if defined(ESP_PWR_LVL_P9)
     BLEDevice::setPower(ESP_PWR_LVL_P9);
-#else
-    BLEDevice::setPower(ESP_BLE_PWR_TYPE_DEFAULT);
 #endif
 
     // Prefer a robust address type on ESP32
