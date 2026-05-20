@@ -78,7 +78,6 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     }
 
     advertiseNow();
-    adv_->start();
 }
 
 void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
@@ -125,6 +124,10 @@ bool ImprovWiFiBLE::tryConnectToWifi(const char *ssid, const char *password,
     return (WiFi.status() == WL_CONNECTED);
 }
 
+bool ImprovWiFiBLE::isAdvertising() {
+    return (server_ && service_ && adv_); // espressif Nimble in Arduino lacks isAdvertising()
+}
+
 bool ImprovWiFiBLE::isConnected() {
     return WiFi.status() == WL_CONNECTED;
 }
@@ -134,7 +137,6 @@ bool ImprovWiFiBLE::isConnected() {
 void ImprovWiFiBLE::onDisconnect(BLEServer *) {
     if (adv_) {
         advertiseNow();
-        adv_->start();
     }
 }
 

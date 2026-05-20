@@ -69,6 +69,9 @@ public:
   // Mirror of ImprovWiFi::isConnected
   bool isConnected();
 
+  // initialized and BLE running
+  bool isAdvertising();
+
   // BLEServerCallbacks
   void onDisconnect(BLEServer *s) override;
 
