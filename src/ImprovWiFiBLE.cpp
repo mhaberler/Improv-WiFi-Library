@@ -21,6 +21,7 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
                                   const char *firmwareVersion,
                                   const char *deviceName,
                                   const char *deviceUrl) {
+    if (server_) return; // already initialized
     chip_ = chipFamily;
     firmware_name_ = firmwareName ? firmwareName : "";
     firmware_version_ = firmwareVersion ? firmwareVersion : "";
