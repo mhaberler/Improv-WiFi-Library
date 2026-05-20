@@ -6,32 +6,36 @@
 #include "credstore.hpp"
 #include "OneButton.h"
 
+// start BLE provisioning service after 10 sec w/o wifi connect
+#define TIME_TO_CONNECT 10*1000
+
 WiFiServer server(80);
 ImprovWiFiBLE improvBLE;
+static wl_status_t wifiStatus = WL_NO_SHIELD; // status tracking
 
 char linebuf[80];
 int charcount = 0;
-void blink_led(int d, int times);
+void blinkLed(int d, int times);
 void handleHttpRequest();
-void button_setup();
-void button_loop();
+void buttonSetup();
+void buttonCheck();
 
 void onImprovWiFiErrorCb(ImprovTypes::Error err) {
     server.stop();
-    blink_led(2000, 3);
+    blinkLed(2000, 3);
 }
 
 void onImprovWiFiConnectedCb(const char *ssid, const char *password) {
     // Save ssid and password here
     log_i("wifi connected %s %s", ssid, password);
     server.begin();
-    blink_led(100, 3);
+    blinkLed(100, 3);
 }
 
 void onImprovWiFiIdentifyCb() {
     // Visible/audible identification of this device.
     log_i("identify received");
-    blink_led(80, 10);
+    blinkLed(80, 10);
 }
 
 bool connectWifi(const char *ssid, const char *password) {
@@ -40,45 +44,55 @@ bool connectWifi(const char *ssid, const char *password) {
     WiFi.begin(ssid, password);
 
     while (!improvBLE.isConnected()) {
-        blink_led(500, 1);
+        blinkLed(500, 1);
     }
     saveWiFiCredentials( ssid, password);
     return true;
 }
 
+void startImprovProvisioning() {
+    improvBLE.onImprovError(onImprovWiFiErrorCb);
+    improvBLE.onImprovConnected(onImprovWiFiConnectedCb);
+    improvBLE.onImprovIdentify(onImprovWiFiIdentifyCb);  // Optional
+    improvBLE.setCustomConnectWiFi(connectWifi);  // Optional
+
+    // starts the advertisement + provisioning process
+    improvBLE.setDeviceInfo(ImprovTypes::ChipFamily::CF_ESP32, "My-Device-9a4c2b", "2.1.5", "My Device");
+}
+
 void setup() {
     Serial.begin(115200);
     pinMode(LED_BLUE, OUTPUT);
-    button_setup();
+    buttonSetup();
 
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
 
     String savedSSID, savedPASS;
     if (loadWiFiCredentials(savedSSID, savedPASS)) {
-        log_w("loaded creds: %s %s ", savedSSID.c_str(), savedPASS.c_str());
-        if (savedSSID == "") {
-            Serial.println("No Wi-Fi credentials found in Preferences.");
-            WiFi.begin();
-        } else {
-            WiFi.begin(savedSSID.c_str(), savedPASS.c_str());
-        }
+        log_w("loaded creds: %s %s", savedSSID.c_str(), savedPASS.c_str());
+        WiFi.begin(savedSSID.c_str(), savedPASS.c_str());
     } else {
         log_i("No Wi-Fi credentials found in Preferences.");
         WiFi.begin();
     }
-
-    improvBLE.setDeviceInfo(ImprovTypes::ChipFamily::CF_ESP32, "My-Device-9a4c2b", "2.1.5", "My Device");
-    improvBLE.onImprovError(onImprovWiFiErrorCb);
-    improvBLE.onImprovConnected(onImprovWiFiConnectedCb);
-    improvBLE.onImprovIdentify(onImprovWiFiIdentifyCb);  // Optional
-    improvBLE.setCustomConnectWiFi(connectWifi);  // Optional
-
-    blink_led(100, 5);
+    blinkLed(100, 5);
 }
 
 void loop() {
-    button_loop();
+    buttonCheck();
+
+    static wl_status_t wifiStatus = WL_NO_SHIELD;
+    wl_status_t s = WiFi.status();
+    if (wifiStatus ^ s) {
+        log_i("WiFi status change %u -> %u", wifiStatus, s);
+        wifiStatus = s;
+    }
+    if (wifiStatus != WL_CONNECTED && millis() > TIME_TO_CONNECT) {
+        if (!improvBLE.isAdvertising()) {
+            startImprovProvisioning();
+        }
+    }
 
     if (improvBLE.isConnected()) {
         handleHttpRequest();
@@ -89,7 +103,7 @@ void handleHttpRequest() {
 
     WiFiClient client = server.available();
     if (client) {
-        blink_led(100, 1);
+        blinkLed(100, 1);
         memset(linebuf, 0, sizeof(linebuf));
         charcount = 0;
         // an http request ends with a blank line
@@ -138,7 +152,7 @@ void handleHttpRequest() {
     }
 }
 
-void blink_led(int d, int times) {
+void blinkLed(int d, int times) {
     for (int j = 0; j < times; j++) {
         digitalWrite(LED_BLUE, HIGH);
         delay(d);
@@ -152,7 +166,7 @@ void blink_led(int d, int times) {
 uint32_t numClicks;
 
 OneButton button(BUTTON_PIN, true,
-                 true); // Button pin, active low, pullup enabled
+                 true); // Button pin, active low,  pullup enabled
 
 void singleClick() {
     log_i("singleClick() detected.");
@@ -180,7 +194,7 @@ void multiClick() {
 
 #endif
 
-void button_setup(void) {
+void buttonSetup(void) {
 #if defined(BUTTON_PIN)
     button.attachClick(singleClick);
     button.attachDoubleClick(doubleClick);
@@ -188,7 +202,7 @@ void button_setup(void) {
 #endif
 }
 
-void button_loop(void) {
+void buttonCheck(void) {
 #if defined(BUTTON_PIN)
     button.tick();
 #endif
