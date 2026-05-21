@@ -35,8 +35,10 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     BLEDevice::setPower(ESP_PWR_LVL_P9);
 #endif
 
+#if defined(CONFIG_NIMBLE_ENABLED)
     // Prefer a robust address type on ESP32
     BLEDevice::setOwnAddrType(BLE_OWN_ADDR_RPA_RANDOM_DEFAULT);
+#endif
 
     server_ = BLEDevice::createServer();
     server_->setCallbacks(this);
