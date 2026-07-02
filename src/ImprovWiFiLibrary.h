@@ -59,7 +59,10 @@ private:
   void sendResponse(std::vector<uint8_t> &response);
   void setError(ImprovTypes::Error error);
   void getAvailableWifiNetworks();
+  void pollWifiNetworksScan();
   inline void replaceAll(std::string &str, const std::string &from, const std::string &to);
+
+  bool _scanningNetworks = false;
 
   // improv SDK
   bool parseImprovSerial(size_t position, uint8_t byte, const uint8_t *buffer);

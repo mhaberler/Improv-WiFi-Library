@@ -10,6 +10,10 @@
 
 void ImprovWiFi::handleSerial()
 {
+  if (_scanningNetworks)
+  {
+    pollWifiNetworksScan();
+  }
 
   if (serial->available() > 0)
   {
@@ -211,9 +215,34 @@ bool ImprovWiFi::tryConnectToWifi(const char *ssid, const char *password, uint32
   return true;
 }
 
+// Starts an async scan (WIFI_SCAN_RUNNING) so the radio scan does not block
+// handleSerial()'s caller — important under AP+STA coexistence, where a
+// synchronous WiFi.scanNetworks() can take minutes and would otherwise stall
+// the whole sketch loop (MQTT, web server, etc). Results are delivered later
+// by pollWifiNetworksScan(), called from handleSerial() on every iteration.
 void ImprovWiFi::getAvailableWifiNetworks()
 {
-  int networkNum = WiFi.scanNetworks();
+  if (_scanningNetworks)
+  {
+    return; // a scan is already in flight
+  }
+  WiFi.scanNetworks(true);
+  _scanningNetworks = true;
+}
+
+void ImprovWiFi::pollWifiNetworksScan()
+{
+  int networkNum = WiFi.scanComplete();
+  if (networkNum == WIFI_SCAN_RUNNING)
+  {
+    return; // still scanning, check again next call
+  }
+  _scanningNetworks = false;
+
+  if (networkNum == WIFI_SCAN_FAILED)
+  {
+    networkNum = 0;
+  }
 
   for (int id = 0; id < networkNum; ++id)
   {
@@ -228,6 +257,7 @@ void ImprovWiFi::getAvailableWifiNetworks()
     sendResponse(data);
     DELAY_MS(1);
   }
+  WiFi.scanDelete();
   // final response
   std::vector<uint8_t> data =
       build_rpc_response(ImprovTypes::GET_WIFI_NETWORKS, std::vector<std::string>{}, false);
