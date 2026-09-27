@@ -9,6 +9,10 @@
     #include <WiFi.h>
 #endif
 
+// BLE objects are raw pointers (3.x) or value handles (4.x)
+template <class T> static T &deref(T &t) { return t; }
+template <class T> static T &deref(T *t) { return *t; }
+
 // ==== ctor/dtor ====
 ImprovWiFiBLE::~ImprovWiFiBLE() {
     // Minimal cleanup; BLEDevice::deinit() can be called by app if desired
@@ -29,6 +33,63 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     device_friendly_name_ = deviceName ? deviceName : "";
     device_url_ = deviceUrl ? deviceUrl : "";
 
+#ifdef IMPROV_BLE_V4
+    BTStatus st = BLE.begin(device_name_);
+    if (!st) {
+        log_e("BLE.begin failed: %s", st.toString());
+        return;
+    }
+    BLE.setPower(9);
+
+    server_ = BLE.createServer();
+    server_.advertiseOnDisconnect(false); // advertiseNow() restarts with current state
+    server_.onDisconnect([this](const BLEServer &, const BLEConnInfo &, uint8_t) {
+        if (adv_) {
+            advertiseNow();
+        }
+    });
+
+    service_ = server_.createService(BLEUUID(SVC_UUID));
+
+    ch_state_ = service_.createCharacteristic(
+                    BLEUUID(CHAR_STATE_UUID), BLEProperty::Read | BLEProperty::Notify, BLEPermission::ReadOpen);
+    ch_error_ = service_.createCharacteristic(
+                    BLEUUID(CHAR_ERROR_UUID), BLEProperty::Read | BLEProperty::Notify, BLEPermission::ReadOpen);
+    ch_rpc_cmd_ = service_.createCharacteristic(
+                      BLEUUID(CHAR_RPC_CMD_UUID), BLEProperty::Write | BLEProperty::WriteNR, BLEPermission::WriteOpen);
+    ch_rpc_res_ = service_.createCharacteristic(
+                      BLEUUID(CHAR_RPC_RES_UUID), BLEProperty::Read | BLEProperty::Notify, BLEPermission::ReadOpen);
+    ch_caps_ = service_.createCharacteristic(
+                   BLEUUID(CHAR_CAPS_UUID), BLEProperty::Read, BLEPermission::ReadOpen);
+
+    ch_rpc_cmd_.onWrite([this](const BLECharacteristic &c, const BLEConnInfo &) {
+        size_t len = 0;
+        const uint8_t *v = c.getValue(&len);
+        if (!v || len < 3) {
+            reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);
+            return;
+        }
+        handleRpc(v, len);
+    });
+
+    ch_caps_.setValue(&caps_, 1);
+    ch_error_.setValue(&error_, 1);
+    ch_state_.setValue(&state_, 1);
+
+    st = server_.start();
+    if (!st) {
+        log_e("BLE server start failed: %s", st.toString());
+        return;
+    }
+
+    adv_ = BLE.getAdvertising();
+    adv_.setAdvertisementData(buildAdvData(state_, caps_));
+    if (!device_name_.isEmpty()) {
+        BLEAdvertisementData scan;
+        scan.setName(device_name_);
+        adv_.setScanResponseData(scan);
+    }
+#else
     // Initialize BLE and set up the Improv service
     BLEDevice::init(device_name_.c_str());
 #if defined(ESP_PWR_LVL_P9)
@@ -78,6 +139,7 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
         scan.setName(device_name_.c_str());
         adv_->setScanResponseData(scan);
     }
+#endif
 
     advertiseNow();
 }
@@ -134,6 +196,7 @@ bool ImprovWiFiBLE::isConnected() {
     return WiFi.status() == WL_CONNECTED;
 }
 
+#ifndef IMPROV_BLE_V4
 // ==== BLE callbacks ====
 
 void ImprovWiFiBLE::onDisconnect(BLEServer *) {
@@ -152,6 +215,7 @@ void ImprovWiFiBLE::onWrite(BLECharacteristic *c) {
     }
     handleRpc(reinterpret_cast<const uint8_t *>(v.c_str()), v.length());
 }
+#endif
 
 // ==== internal helpers / RPCs ====
 
@@ -267,30 +331,30 @@ void ImprovWiFiBLE::sendDeviceUrl() {
     buf.insert(buf.end(), url.begin(), url.end());
 
     buf.push_back(checksumLSB(buf.data(), buf.size()));
-    ch_rpc_res_->setValue(buf.data(), buf.size());
-    ch_rpc_res_->notify();
+    deref(ch_rpc_res_).setValue(buf.data(), buf.size());
+    deref(ch_rpc_res_).notify();
 }
 
 void ImprovWiFiBLE::updateState(uint8_t s) {
     state_ = s;
     if (ch_state_) {
-        ch_state_->setValue(&state_, 1);
-        ch_state_->notify();
+        deref(ch_state_).setValue(&state_, 1);
+        deref(ch_state_).notify();
     }
 }
 
 void ImprovWiFiBLE::updateError(uint8_t e) {
     error_ = e;
     if (ch_error_) {
-        ch_error_->setValue(&error_, 1);
-        ch_error_->notify();
+        deref(ch_error_).setValue(&error_, 1);
+        deref(ch_error_).notify();
     }
 }
 
 void ImprovWiFiBLE::updateCaps(uint8_t caps) {
     caps_ = caps;
     if (ch_caps_) {
-        ch_caps_->setValue(&caps_, 1);
+        deref(ch_caps_).setValue(&caps_, 1);
     }
 }
 
@@ -303,6 +367,18 @@ void ImprovWiFiBLE::reportError(uint8_t bleErr, ImprovTypes::Error apiErr) {
 BLEAdvertisementData ImprovWiFiBLE::buildAdvData(uint8_t state,
         uint8_t caps) {
     BLEAdvertisementData ad;
+
+#ifdef IMPROV_BLE_V4
+    // Flags(3) + 128-bit service UUID(18) + service data 0x4677(10) = 31 bytes,
+    // the legacy ADV limit: no room for a name (it goes in the scan response).
+    ad.setFlags(BLEAdvFlag::GeneralDisc | BLEAdvFlag::BrEdrNotSupported);
+    ad.addServiceUUID(BLEUUID(SVC_UUID));
+    // Improv spec: service data 0x4677 = [state, caps, 0, 0, 0, 0]
+    const uint8_t payload[6] = {state, caps, 0x00, 0x00, 0x00, 0x00};
+    ad.setServiceData(BLEUUID((uint16_t)SERVICE_DATA_UUID_16), payload,
+                      sizeof(payload));
+    return ad;
+#else
 
     // Flags: LE General Discoverable + BR/EDR not supported
     ad.setFlags(ESP_BLE_ADV_FLAG_BREDR_NOT_SPT | ESP_BLE_ADV_FLAG_GEN_DISC);
@@ -325,18 +401,19 @@ BLEAdvertisementData ImprovWiFiBLE::buildAdvData(uint8_t state,
     }
 
     return ad;
+#endif
 }
 
 void ImprovWiFiBLE::advertiseNow() {
     if (!adv_)
         return;
-    adv_->stop();
+    deref(adv_).stop();
 
     // Rebuild adv data with current state/caps; preserve scan response (name)
     BLEAdvertisementData advData = buildAdvData(state_, caps_);
-    adv_->setAdvertisementData(advData);
+    deref(adv_).setAdvertisementData(advData);
 
-    adv_->start();
+    deref(adv_).start();
 }
 
 uint8_t ImprovWiFiBLE::checksumLSB(const uint8_t *data, size_t len) {

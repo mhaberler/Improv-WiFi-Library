@@ -9,7 +9,18 @@
 #include <Arduino.h>
 #endif
 
+#if __has_include(<esp_arduino_version.h>)
+#include <esp_arduino_version.h>
+#endif
+
+// Arduino-ESP32 4.x replaced the BLEDevice API with the handle/lambda based
+// BLE API (#include <BLE.h>)
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 4
+#define IMPROV_BLE_V4 1
+#include <BLE.h>
+#else
 #include <BLEDevice.h>
+#endif
 
 /**
  * Improv WiFi BLE class
@@ -25,8 +36,12 @@
  *   improvBLE.onImprovIdentify(...);
  *   improvBLE.setCustomConnectWiFi(...);
  */
+#ifdef IMPROV_BLE_V4
+class ImprovWiFiBLE {
+#else
 class ImprovWiFiBLE : public BLECharacteristicCallbacks,
                       public BLEServerCallbacks {
+#endif
 public:
   /**
    * ## Type definitions (same as ImprovWiFi)
@@ -72,11 +87,13 @@ public:
   // initialized and BLE running
   bool isAdvertising();
 
+#ifndef IMPROV_BLE_V4
   // BLEServerCallbacks
   void onDisconnect(BLEServer *s) override;
 
   // BLECharacteristicCallbacks
   void onWrite(BLECharacteristic *c) override;
+#endif
 
 private:
   // === Improv BLE UUIDs ===
@@ -135,6 +152,16 @@ private:
   void sendDeviceUrl();
 
   // BLE objects
+#ifdef IMPROV_BLE_V4
+  BLEServer server_;
+  BLEService service_;
+  BLECharacteristic ch_state_;
+  BLECharacteristic ch_error_;
+  BLECharacteristic ch_rpc_cmd_;
+  BLECharacteristic ch_rpc_res_;
+  BLECharacteristic ch_caps_;
+  BLEAdvertising adv_;
+#else
   BLEServer *server_{nullptr};
   BLEService *service_{nullptr};
   BLECharacteristic *ch_state_{nullptr};
@@ -143,6 +170,7 @@ private:
   BLECharacteristic *ch_rpc_res_{nullptr};
   BLECharacteristic *ch_caps_{nullptr};
   BLEAdvertising *adv_{nullptr};
+#endif
 
   // identity
   ImprovTypes::ChipFamily chip_{ImprovTypes::ChipFamily::CF_ESP32};
