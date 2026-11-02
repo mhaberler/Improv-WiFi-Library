@@ -92,10 +92,10 @@ bool ImprovWiFi::onCommandCallback(ImprovTypes::ImprovCommand cmd)
     }
     else
     {
-      // iDryer fork: при неудаче остаёмся AUTHORIZED (готовы к повторному вводу),
-      // а не STATE_STOPPED. STOPPED по спеке = "Wi-Fi физически выключен" и
-      // залипает в esp-web-tools ("device has Wi-Fi turned off"), требуя reset.
-      // Эталонная реализация ESPHome тоже возвращает STATE_AUTHORIZED.
+      // iDryer fork: on failure, stay in AUTHORIZED (ready for credentials to be re-entered)
+      // instead of going to STATE_STOPPED. Per the spec, STOPPED means "Wi-Fi is physically off",
+      // and esp-web-tools gets stuck on it ("device has Wi-Fi turned off") until the device is reset.
+      // ESPHome's reference implementation also returns STATE_AUTHORIZED.
       setState(ImprovTypes::STATE_AUTHORIZED);
       setError(ImprovTypes::ERROR_UNABLE_TO_CONNECT);
       onErrorCallback(ImprovTypes::ERROR_UNABLE_TO_CONNECT);
