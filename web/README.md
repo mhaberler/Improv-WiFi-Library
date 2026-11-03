@@ -7,16 +7,18 @@ published at <https://mhaberler.github.io/Improv-WiFi-Library/>.
 
 | Client | Source | Commit |
 |---|---|---|
-| Bluetooth | [mhaberler/sdk-ble-js](https://github.com/mhaberler/sdk-ble-js/tree/fix/rpc-write-await) (`fix/rpc-write-await`) | `5211171` |
+| Bluetooth | [mhaberler/sdk-ble-js](https://github.com/mhaberler/sdk-ble-js/tree/fix/rpc-write-await) (`fix/rpc-write-await`) | `7abfedc` |
 | Serial | [improv-wifi/sdk-serial-js](https://github.com/improv-wifi/sdk-serial-js) | `94e3113` |
 
 The Bluetooth client is newer than the one on improv-wifi.com (device info,
-network scan) and carries two fixes on top of upstream `580431a`:
+network scan) and carries three fixes on top of upstream `580431a`:
 
 - an RPC whose write fails no longer hangs the dialog; results notified before
   the write is acknowledged no longer make the next request fail with
   "GATT operation already in progress"
 - the Wi-Fi form is shown only after device info and networks are loaded
+- the "Next" button appears even when the device reports PROVISIONED before
+  sending its URL
 
 ## Run locally
 

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 BLE_REPO=https://github.com/mhaberler/sdk-ble-js.git
-BLE_COMMIT=5211171 # fix/rpc-write-await on top of upstream 580431a
+BLE_COMMIT=7abfedc # fix/rpc-write-await on top of upstream 580431a
 SERIAL_REPO=https://github.com/improv-wifi/sdk-serial-js.git
 SERIAL_COMMIT=94e3113
 
