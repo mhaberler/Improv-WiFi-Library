@@ -91,6 +91,13 @@ public:
   // initialized and BLE running
   bool isAdvertising();
 
+  // Stop BLE provisioning and free its memory: stops advertising, ends the RPC
+  // worker (after the RPC in progress) and shuts down the BLE stack.
+  // setDeviceInfo() starts it again. releaseMemory=true also returns the BT
+  // controller memory to the heap; BLE then cannot be restarted until reboot.
+  // Call from loop()/setup(), not from an Improv callback.
+  void end(bool releaseMemory = false);
+
 #ifndef IMPROV_BLE_V4
   // BLEServerCallbacks
   void onDisconnect(BLEServer *s) override;
@@ -212,6 +219,8 @@ private:
     uint8_t data[2 + 255 + 1]; // cmd + len + payload + checksum
   };
   QueueHandle_t rpc_queue_{nullptr};
+  TaskHandle_t rpc_task_{nullptr}; // cleared by the task when it exits
+  static constexpr uint16_t RPC_STOP = 0xFFFF; // RpcPacket.len: worker exits
   static void rpcTask(void *arg);
 #ifdef IMPROV_BLE_V4
   uint16_t peer_mtu_{23}; // captured from BLEConnInfo on write

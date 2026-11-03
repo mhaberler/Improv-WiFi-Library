@@ -38,7 +38,7 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     if (!rpc_queue_) {
         rpc_queue_ = xQueueCreate(2, sizeof(RpcPacket));
         if (!rpc_queue_ ||
-            xTaskCreate(rpcTask, "improv_rpc", 6144, this, 1, nullptr) != pdPASS) {
+            xTaskCreate(rpcTask, "improv_rpc", 6144, this, 1, &rpc_task_) != pdPASS) {
             log_e("failed to start Improv RPC task");
             return;
         }
@@ -197,6 +197,51 @@ bool ImprovWiFiBLE::tryConnectToWifi(const char *ssid, const char *password,
     return (WiFi.status() == WL_CONNECTED);
 }
 
+void ImprovWiFiBLE::end(bool releaseMemory) {
+    if (rpc_task_ && xTaskGetCurrentTaskHandle() == rpc_task_) {
+        log_e("end() called from an Improv callback; call it from loop()");
+        return;
+    }
+    if (adv_) {
+        deref(adv_).stop();
+    }
+    // Stop the worker: it finishes the RPC in progress, then exits.
+    if (rpc_task_) {
+        static RpcPacket stop;
+        stop.len = RPC_STOP;
+        xQueueSend(rpc_queue_, &stop, portMAX_DELAY);
+        while (rpc_task_) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+    if (server_) {
+#ifdef IMPROV_BLE_V4
+        BLE.end(releaseMemory);
+        server_ = BLEServer();
+        service_ = BLEService();
+        ch_state_ = BLECharacteristic();
+        ch_error_ = BLECharacteristic();
+        ch_rpc_cmd_ = BLECharacteristic();
+        ch_rpc_res_ = BLECharacteristic();
+        ch_caps_ = BLECharacteristic();
+        adv_ = BLEAdvertising();
+#else
+        BLEDevice::deinit(releaseMemory);
+        server_ = nullptr;
+        service_ = nullptr;
+        ch_state_ = ch_error_ = ch_rpc_cmd_ = ch_rpc_res_ = ch_caps_ = nullptr;
+        adv_ = nullptr;
+#endif
+    }
+    if (rpc_queue_) {
+        vQueueDelete(rpc_queue_);
+        rpc_queue_ = nullptr;
+    }
+    std::vector<uint8_t>().swap(rx_);
+    state_ = STATE_AUTHORIZED;
+    error_ = ERR_NONE;
+}
+
 bool ImprovWiFiBLE::isAdvertising() {
     return (server_ && service_ && adv_); // espressif Nimble in Arduino lacks isAdvertising()
 }
@@ -251,7 +296,7 @@ void ImprovWiFiBLE::onRpcWrite(const uint8_t *data, size_t len) {
         pkt.len = 0; // can't be valid (len byte max 255)
     }
     rx_.clear();
-    if (xQueueSend(rpc_queue_, &pkt, 0) != pdTRUE) {
+    if (!rpc_queue_ || xQueueSend(rpc_queue_, &pkt, 0) != pdTRUE) {
         log_w("RPC dropped, worker busy");
     }
 }
@@ -262,6 +307,10 @@ void ImprovWiFiBLE::rpcTask(void *arg) {
     for (;;) {
         if (xQueueReceive(self->rpc_queue_, &pkt, portMAX_DELAY) != pdTRUE) {
             continue;
+        }
+        if (pkt.len == RPC_STOP) {
+            self->rpc_task_ = nullptr; // signals end() that we're done
+            vTaskDelete(nullptr);
         }
         if (pkt.len < 3) {
             self->reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);

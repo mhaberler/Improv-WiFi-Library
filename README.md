@@ -46,6 +46,18 @@ That's it — no `lib_deps` entry is needed for BLE.
 - `onImprovIdentify(cb)` — client asked the device to identify itself (e.g. blink an LED, beep). The capability is advertised by default.
 - `setCustomConnectWiFi(cb)` — override the default Wi-Fi connect logic.
 
+### Stopping BLE provisioning
+
+`improvBLE.end()` stops advertising, ends the RPC worker task (after the RPC
+in progress) and shuts down the BLE stack. Its heap goes back to the
+application; see [Memory footprint](#memory-footprint). `setDeviceInfo()`
+starts it again. Call `end()` from `loop()` or `setup()`, not from an Improv
+callback.
+
+`end(true)` also asks the core to release the Bluetooth controller memory, so
+BLE cannot be restarted until reboot. On the ESP32-C6 this frees no
+additional heap.
+
 ### Example with BLE enabled:
 
 ```cpp
@@ -113,6 +125,60 @@ void loop() {
   improvSerial.handleSerial();
 }
 ```
+
+## Memory footprint
+
+Measured with [examples/heap-footprint](examples/heap-footprint) on an
+ESP32-C6 (M5Stack NanoC6) and an ESP32-S3 (M5Stack StampS3). Software:
+Arduino-ESP32 3.3.12 (pioarduino 55.03.312), library 0.7.0,
+`CORE_DEBUG_LEVEL=0`. The sketch starts Wi-Fi (STA, no credentials) and the
+selected transports, then reports the heap while idle: provisioning
+available, BLE advertising, no client connected. The baseline is the same
+sketch without Improv. Free heap is `ESP.getFreeHeap()`, and it stayed stable
+while idle. Flash is from the PlatformIO build summary.
+
+| Variant | C6 free heap | C6 Δ heap | C6 Δ flash | S3 free heap | S3 Δ heap | S3 Δ flash |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline (Wi-Fi only) | 321,188 | — | — | 259,960 | — | — |
+| Serial only | 320,900 | −288 B | +8.6 KiB | 259,688 | −272 B | +8.1 KiB |
+| BLE only | 243,732 | −75.6 KiB | +385 KiB | 153,384 | −104.1 KiB | +229 KiB |
+| Serial + BLE | 243,476 | −75.9 KiB | +392.5 KiB | 153,136 | −104.3 KiB | +235.8 KiB |
+
+Free heap is in bytes. Δ is relative to the baseline.
+
+- Almost all of the BLE cost is the Bluetooth stack (NimBLE) and its
+  controller, not the Improv code.
+- BLE adds an `improv_rpc` worker task (6 KiB stack) and a 2-entry command queue.
+- Not measured: peaks while a client is connected or during a Wi-Fi scan.
+
+### Getting the BLE heap back: `end()`
+
+BLE is started (`setDeviceInfo()`), advertises for 3 s, then is stopped with
+`end()`. The cycle runs 5 times, followed by a separate `end(true)` run.
+
+| Phase | C6 free heap | S3 free heap |
+| --- | ---: | ---: |
+| Wi-Fi only build (no BLE code) | 321,188 | 259,960 |
+| BLE stack linked, not started yet | 293,348 | 236,424 |
+| BLE advertising | 243,476 | 153,140 |
+| after `end()` (1st cycle) | 289,620 | 232,844 |
+| after `end()` (5th cycle) | 275,432 | 218,656 |
+| after `end(true)` | 289,620 | 234,756 |
+
+- **Linked but not started:** as soon as the BLE stack is linked into the
+  firmware, part of the heap is gone at boot, even if BLE is never started.
+  That is about 27 KiB on the C6 and about 23 KiB on the S3. `end()` doesn't
+  give it back.
+- **`end()`:** returns almost everything that starting BLE takes, about
+  45 of 49 KiB on the C6 and about 78 of 81 KiB on the S3.
+- **Repeated cycles:** each start/`end()` cycle loses about 3.5 KiB, on both
+  chips. The loss is in the Arduino BLE library's teardown, not in Improv
+  code. BLE still works after 5 cycles (checked on the C6).
+- **`end(true)`:** additionally releases about 1.9 KiB of controller memory on
+  the S3, and nothing on the C6. BLE cannot be restarted afterwards.
+- **Net cost of one provisioning window:** after a window started once and
+  closed with `end()`, free heap stays below a firmware without BLE by about
+  31 KiB on the C6 and about 26.5 KiB on the S3.
 
 ## Documentation
 
