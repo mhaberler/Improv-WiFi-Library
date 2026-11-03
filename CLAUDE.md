@@ -46,6 +46,7 @@ BLE transport (`ImprovWiFiBLE`):
 - BLE RPCs: `0x01` Wi-Fi settings, `0x02` identify, `0x03` device info, `0x04` scan. Note `0x02` means GET_CURRENT_STATE on Serial.
 - BLE scan answers with **one** RPC result (all `ssid, rssi, auth` triples), unlike Serial's one-per-network + empty terminator. Sized to `min(255, MTU-6)`. Aborts a pending STA connect if the driver refuses to scan.
 - RPCs execute on a FreeRTOS worker task (`improv_rpc`), not in the BLE write callback: the write must be acknowledged before the result notify, or Web Bluetooth rejects the client's next write ("GATT operation already in progress").
+- Wi-Fi settings success: BLE sends the device-URL RPC result (default `http://<IP>`, `{LOCAL_IPV4}` substituted) **before** the PROVISIONED state; sdk-ble-js only re-renders on the state change, so the reverse order loses its "Next" button.
 - RPC command writes are reassembled across multiple BLE writes (spec: payloads >20 bytes may be split).
 
 Callbacks (set before/after `setDeviceInfo`):

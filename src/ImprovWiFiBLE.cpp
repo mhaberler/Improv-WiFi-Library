@@ -363,11 +363,13 @@ void ImprovWiFiBLE::rpcSendWifi(const uint8_t *p, size_t n) {
         onImprovConnectedCallback_(ssid.c_str(), pass.c_str());
     }
 
+    // Send device URL BEFORE the PROVISIONED state: sdk-ble-js re-renders its
+    // success screen on the state change only, so a URL arriving afterwards
+    // never shows up as the "Next" button.
+    sendDeviceUrl();
+
     updateState(STATE_PROVISIONED);
     advertiseNow();
-
-    // Send device URL back (mirrors serial semantics)
-    sendDeviceUrl();
 
     delay(250); // allow clients to read updated chars
 }
@@ -466,7 +468,16 @@ void ImprovWiFiBLE::rpcScanNetworks() {
 }
 
 void ImprovWiFiBLE::sendDeviceUrl() {
-    sendRpcResult(0x01, {device_url_});
+    // Same as the serial transport: default to http://<IP>, else fill in
+    // {LOCAL_IPV4}. Works on a copy so the template survives re-provisioning.
+    const String ip = WiFi.localIP().toString();
+    String url = device_url_;
+    if (url.isEmpty()) {
+        url = "http://" + ip;
+    } else {
+        url.replace("{LOCAL_IPV4}", ip);
+    }
+    sendRpcResult(0x01, {url});
 }
 
 uint16_t ImprovWiFiBLE::peerMtu() {
