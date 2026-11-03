@@ -51,6 +51,8 @@ enum Command : uint8_t {
 };
 
 static const uint8_t CAPABILITY_IDENTIFY = 0x01;
+static const uint8_t CAPABILITY_DEVICE_INFO = 0x02; // BLE only
+static const uint8_t CAPABILITY_WIFI_SCAN = 0x04;   // BLE only
 static const uint8_t IMPROV_SERIAL_VERSION = 1;
 
 enum ImprovSerialType : uint8_t {
@@ -80,6 +82,10 @@ enum ChipFamily : uint8_t {
   CF_ESP32_P4,
   CF_COUNT
 };
+
+static const char *const CHIP_FAMILY_DESC[CF_COUNT] = {
+    "ESP32",    "ESP32-C3", "ESP32-C6",  "ESP32-S2", "ESP32-S3", "ESP8266",
+    "ESP32-C2", "ESP32-C5", "ESP32-C61", "ESP32-H2", "ESP32-P4"};
 
 struct ImprovWiFiParamsStruct {
   std::string firmwareName;

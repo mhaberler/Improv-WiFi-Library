@@ -3,6 +3,8 @@
 
 #include "ImprovWiFiBLE.h"
 
+#include <algorithm>
+
 #if defined(ARDUINO_ARCH_ESP8266)
     #include <ESP8266WiFi.h>
 #elif defined(ARDUINO_ARCH_ESP32)
@@ -44,6 +46,7 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     server_ = BLE.createServer();
     server_.advertiseOnDisconnect(false); // advertiseNow() restarts with current state
     server_.onDisconnect([this](const BLEServer &, const BLEConnInfo &, uint8_t) {
+        rx_.clear();
         if (adv_) {
             advertiseNow();
         }
@@ -62,14 +65,11 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     ch_caps_ = service_.createCharacteristic(
                    BLEUUID(CHAR_CAPS_UUID), BLEProperty::Read, BLEPermission::ReadOpen);
 
-    ch_rpc_cmd_.onWrite([this](const BLECharacteristic &c, const BLEConnInfo &) {
+    ch_rpc_cmd_.onWrite([this](const BLECharacteristic &c, const BLEConnInfo &conn) {
+        peer_mtu_ = conn.getMTU();
         size_t len = 0;
         const uint8_t *v = c.getValue(&len);
-        if (!v || len < 3) {
-            reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);
-            return;
-        }
-        handleRpc(v, len);
+        onRpcWrite(v, len);
     });
 
     ch_caps_.setValue(&caps_, 1);
@@ -200,6 +200,7 @@ bool ImprovWiFiBLE::isConnected() {
 // ==== BLE callbacks ====
 
 void ImprovWiFiBLE::onDisconnect(BLEServer *) {
+    rx_.clear();
     if (adv_) {
         advertiseNow();
     }
@@ -209,13 +210,34 @@ void ImprovWiFiBLE::onWrite(BLECharacteristic *c) {
     if (c != ch_rpc_cmd_)
         return;
     const String v = c->getValue();
-    if (v.length() < 3) {
-        reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);
-        return;
-    }
-    handleRpc(reinterpret_cast<const uint8_t *>(v.c_str()), v.length());
+    onRpcWrite(reinterpret_cast<const uint8_t *>(v.c_str()), v.length());
 }
 #endif
+
+void ImprovWiFiBLE::onRpcWrite(const uint8_t *data, size_t len) {
+    // a stale partial command is dropped after 1 s of silence
+    if (!rx_.empty() && millis() - rx_last_ms_ > 1000) {
+        rx_.clear();
+    }
+    rx_last_ms_ = millis();
+    if (data && len) {
+        rx_.insert(rx_.end(), data, data + len);
+    }
+
+    if (rx_.size() < 3) {
+        if (rx_.empty()) {
+            reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);
+        }
+        return; // wait for more
+    }
+    const size_t expected = rx_[1] + 3; // cmd + len + payload + checksum
+    if (rx_.size() < expected) {
+        return; // wait for more
+    }
+    std::vector<uint8_t> packet;
+    packet.swap(rx_);
+    handleRpc(packet.data(), packet.size()); // size mismatch -> bad packet
+}
 
 // ==== internal helpers / RPCs ====
 
@@ -240,6 +262,12 @@ void ImprovWiFiBLE::handleRpc(const uint8_t *data, size_t len) {
             break;
         case 0x02: // Identify
             rpcIdentify();
+            break;
+        case 0x03: // Device info
+            rpcDeviceInfo();
+            break;
+        case 0x04: // Scan Wi-Fi networks
+            rpcScanNetworks();
             break;
         default:
             reportError(ERR_UNKNOWN_CMD, ImprovTypes::Error::ERROR_INVALID_RPC);
@@ -317,20 +345,122 @@ void ImprovWiFiBLE::rpcIdentify() {
         onImprovIdentifyCallback_();
 }
 
+void ImprovWiFiBLE::rpcDeviceInfo() {
+    sendRpcResult(0x03, {firmware_name_, firmware_version_,
+                         ImprovTypes::CHIP_FAMILY_DESC[chip_], device_name_});
+}
+
+static const char *authName(wifi_auth_mode_t m) {
+    switch (m) {
+        case WIFI_AUTH_OPEN:
+        case WIFI_AUTH_OWE:
+            return "NO";
+        case WIFI_AUTH_WEP:
+            return "WEP";
+        case WIFI_AUTH_WPA_PSK:
+            return "WPA";
+        case WIFI_AUTH_WPA2_PSK:
+        case WIFI_AUTH_WPA_WPA2_PSK:
+            return "WPA2";
+        case WIFI_AUTH_WPA2_ENTERPRISE:
+            return "WPA2 EAP";
+        case WIFI_AUTH_WPA3_PSK:
+        case WIFI_AUTH_WPA2_WPA3_PSK:
+            return "WPA3";
+        case WIFI_AUTH_WAPI_PSK:
+            return "WAPI";
+        default:
+            return "WPA2"; // some password-protected mode
+    }
+}
+
+void ImprovWiFiBLE::rpcScanNetworks() {
+    // Blocking scan (~2-4 s), like the blocking connect in rpcSendWifi.
+    int n = WiFi.scanNetworks();
+    if (n == WIFI_SCAN_FAILED) {
+        // driver refuses to scan while a connect attempt is in progress;
+        // abort it (keeps STA on and stored config) and retry once
+        log_d("scan failed, aborting pending connect and retrying");
+        WiFi.disconnect(false);
+        n = WiFi.scanNetworks();
+    }
+    if (n < 0) {
+        n = 0;
+    }
+
+    // strongest first, one entry per SSID, hidden networks skipped
+    std::vector<int> order;
+    for (int i = 0; i < n; i++) {
+        order.push_back(i);
+    }
+    std::sort(order.begin(), order.end(),
+              [](int a, int b) { return WiFi.RSSI(a) > WiFi.RSSI(b); });
+
+    // BLE scan result is ONE response: (ssid, rssi, auth) triples.
+    // Must fit the length byte and a single notification.
+    const size_t mtu_payload = peerMtu() - 3 - 3; // ATT header, cmd+len+checksum
+    const size_t budget = std::min<size_t>(255, mtu_payload);
+    std::vector<String> strings;
+    size_t used = 0;
+    for (int i : order) {
+        const String ssid = WiFi.SSID(i);
+        if (ssid.isEmpty()) {
+            continue;
+        }
+        bool dup = false;
+        for (size_t k = 0; k < strings.size(); k += 3) {
+            if (strings[k] == ssid) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) {
+            continue;
+        }
+        const String rssi = String(WiFi.RSSI(i));
+        const char *auth = authName(WiFi.encryptionType(i));
+        const size_t need = 3 + ssid.length() + rssi.length() + strlen(auth);
+        if (used + need > budget) {
+            continue; // a shorter SSID may still fit
+        }
+        used += need;
+        strings.push_back(ssid);
+        strings.push_back(rssi);
+        strings.push_back(auth);
+    }
+    WiFi.scanDelete();
+    log_d("scan: %d found, %u sent, %u/%u bytes", n, strings.size() / 3, used, budget);
+    sendRpcResult(0x04, strings);
+}
+
 void ImprovWiFiBLE::sendDeviceUrl() {
-    // RPC result framing: [last_cmd=0x01][len][url_len][url...][checksum]
+    sendRpcResult(0x01, {device_url_});
+}
+
+uint16_t ImprovWiFiBLE::peerMtu() {
+#ifdef IMPROV_BLE_V4
+    return peer_mtu_;
+#else
+    return server_ ? server_->getPeerMTU(server_->getConnId()) : 23;
+#endif
+}
+
+void ImprovWiFiBLE::sendRpcResult(uint8_t cmd, const std::vector<String> &strings) {
+    // RPC result framing: [cmd][len][str_len][str...]...[checksum]
     std::vector<uint8_t> buf;
-    buf.reserve(4 + device_url_.length());
-    buf.push_back(0x01);
-
-    const std::string url = device_url_.c_str();
-    const uint8_t url_len = static_cast<uint8_t>(url.size());
-    const uint8_t payload_len = 1 + url_len; // [url_len][url]
-    buf.push_back(payload_len);
-    buf.push_back(url_len);
-    buf.insert(buf.end(), url.begin(), url.end());
-
+    buf.push_back(cmd);
+    buf.push_back(0); // payload length, patched below
+    for (const String &str : strings) {
+        const uint8_t l = static_cast<uint8_t>(str.length());
+        buf.push_back(l);
+        buf.insert(buf.end(), str.c_str(), str.c_str() + l);
+    }
+    buf[1] = static_cast<uint8_t>(buf.size() - 2);
     buf.push_back(checksumLSB(buf.data(), buf.size()));
+
+    if (buf.size() > peerMtu() - 3U) {
+        log_w("RPC result %u bytes exceeds MTU %u, client may truncate", buf.size(), peerMtu());
+    }
     deref(ch_rpc_res_).setValue(buf.data(), buf.size());
     deref(ch_rpc_res_).notify();
 }
@@ -387,18 +517,13 @@ BLEAdvertisementData ImprovWiFiBLE::buildAdvData(uint8_t state,
     // Data (not scan response)
     ad.setCompleteServices(BLEUUID(SVC_UUID));
 
-    // REQUIRED: Service Data UUID = 0x4677 with payload [0x77, 0x46, state, caps, 0,0,0,0]
-    // 0x77, 0x46 are the Improv protocol magic bytes - REQUIRED for recognition
-    uint8_t payload[8] = {0x77, 0x46, state, caps, 0x00, 0x00, 0x00, 0x00};
+    // Improv spec: service data 0x4677 = [state, caps, 0, 0, 0, 0].
+    // setServiceData() writes the UUID itself. Flags(3) + 128-bit UUID(18) +
+    // service data(10) = 31 bytes, the legacy ADV limit: no room for a name
+    // (it goes in the scan response).
+    uint8_t payload[6] = {state, caps, 0x00, 0x00, 0x00, 0x00};
     ad.setServiceData(BLEUUID((uint16_t)SERVICE_DATA_UUID_16),
                       String((const char *)payload, sizeof(payload)));
-
-    // Optional: a short name in the primary ADV helps some scanners; keep it
-    // short to stay under 31B
-    if (!device_name_.isEmpty()) {
-        // Short name so we still fit UUID + service data
-        ad.setShortName(device_name_.c_str());
-    }
 
     return ad;
 #endif

@@ -112,7 +112,7 @@ bool ImprovWiFi::onCommandCallback(ImprovTypes::ImprovCommand cmd)
         // Firmware version
         improvWiFiParams.firmwareVersion,
         // Hardware chip/variant
-        CHIP_FAMILY_DESC[improvWiFiParams.chipFamily],
+        ImprovTypes::CHIP_FAMILY_DESC[improvWiFiParams.chipFamily],
         // Device name
         improvWiFiParams.deviceName};
     std::vector<uint8_t> data = build_rpc_response(ImprovTypes::GET_DEVICE_INFO, infos, false);

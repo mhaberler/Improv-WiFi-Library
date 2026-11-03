@@ -57,12 +57,12 @@ void startImprovProvisioning() {
     improvBLE.setCustomConnectWiFi(connectWifi);  // Optional
 
     // starts the advertisement + provisioning process
-    improvBLE.setDeviceInfo(ImprovTypes::ChipFamily::CF_ESP32, "My-Device-9a4c2b", "2.1.5", "My Device");
+    improvBLE.setDeviceInfo(IMPROV_CHIP_FAMILY, "My-Device-9a4c2b", "2.1.5", "My Device");
 }
 
 void setup() {
     Serial.begin(115200);
-    pinMode(LED_BLUE, OUTPUT);
+    // pinMode(LED_BLUE, OUTPUT);
     buttonSetup();
 
     WiFi.mode(WIFI_STA);
@@ -154,9 +154,9 @@ void handleHttpRequest() {
 
 void blinkLed(int d, int times) {
     for (int j = 0; j < times; j++) {
-        digitalWrite(LED_BLUE, HIGH);
+        // digitalWrite(LED_BLUE, HIGH);
         delay(d);
-        digitalWrite(LED_BLUE, LOW);
+        // digitalWrite(LED_BLUE, LOW);
         delay(d);
     }
 }

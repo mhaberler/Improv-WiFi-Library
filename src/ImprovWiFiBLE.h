@@ -147,6 +147,15 @@ private:
   void handleRpc(const uint8_t *data, size_t len);
   void rpcSendWifi(const uint8_t *payload, size_t n);
   void rpcIdentify();
+  void rpcDeviceInfo();
+  void rpcScanNetworks();
+
+  // Reassemble RPC commands split across several writes (>20 byte payloads)
+  void onRpcWrite(const uint8_t *data, size_t len);
+
+  // send [cmd][len][strings as len+bytes][checksum] on CHAR_RPC_RES
+  void sendRpcResult(uint8_t cmd, const std::vector<String> &strings);
+  uint16_t peerMtu();
 
   // send response with device URL (mirrors serial transport semantics)
   void sendDeviceUrl();
@@ -183,7 +192,15 @@ private:
   // state
   uint8_t state_{STATE_AUTHORIZED};
   uint8_t error_{ERR_NONE};
-  uint8_t caps_{0x01}; // bit0: Identify supported
+  uint8_t caps_{ImprovTypes::CAPABILITY_IDENTIFY | ImprovTypes::CAPABILITY_DEVICE_INFO |
+                ImprovTypes::CAPABILITY_WIFI_SCAN};
+
+  // RPC command reassembly
+  std::vector<uint8_t> rx_;
+  uint32_t rx_last_ms_{0};
+#ifdef IMPROV_BLE_V4
+  uint16_t peer_mtu_{23}; // captured from BLEConnInfo on write
+#endif
 
   // user callbacks
   OnImprovError *onImprovErrorCallback_{nullptr};
