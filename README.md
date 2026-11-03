@@ -58,6 +58,16 @@ callback.
 BLE cannot be restarted until reboot. On the ESP32-C6 this frees no
 additional heap.
 
+If the application uses BLE itself (for example scanning), use
+`improvBLE.stop()` instead. It stops only Improv: advertising, the RPC worker
+and, on Arduino 4, the Improv GATT service. The BLE stack and the
+application's scanner keep running, and `setDeviceInfo()` starts Improv again.
+On Arduino 3, `stop()` keeps the GATT service registered and reuses it on
+restart. Removing a service there makes the library rebuild the GATT table at
+the next client disconnect, which crashes while the application scans. See
+[Improv next to an application BLE scanner](#improv-next-to-an-application-ble-scanner)
+for the rule that applies to both calls.
+
 ### Example with BLE enabled:
 
 ```cpp
@@ -194,16 +204,19 @@ and Improv is started on top. Measured on the ESP32-S3 with
 | scanning + Improv advertising | 150,388 | 141,144 |
 | Improv's own cost | 12.7 KiB | 10.9 KiB |
 
-**Start Improv only while no scan is running.** Creating Improv's GATT server
-resets NimBLE's GATT table, which fails during a scan with
-`assert failed: ble_svc_gap_init` and makes the device reboot in a loop.
-`setDeviceInfo()` therefore refuses to start while a scan is active: it logs
-an error, and `isAdvertising()` stays false. Pause the scan around the start
+On the ESP32-C6, Improv costs about 13.9 KiB on top of a running scanner, on
+both cores, with legacy or extended scanning.
+
+**Start and stop Improv only while no scan is running.** Adding or removing
+Improv's GATT service resets NimBLE's GATT table, which fails during a scan
+with `assert failed: ble_svc_gap_init` and makes the device reboot in a loop.
+`setDeviceInfo()` and `stop()` therefore refuse to run while a scan is active:
+they log an error and leave Improv as it was. Pause the scan around the call
 and resume it with your own parameters:
 
 ```cpp
 scan->stop();                      // Arduino 4: scan.stop() / scan.stopExtended()
-improvBLE.setDeviceInfo(IMPROV_CHIP_FAMILY, "fw", "1.0", "My Device");
+improvBLE.setDeviceInfo(IMPROV_CHIP_FAMILY, "fw", "1.0", "My Device");  // or improvBLE.stop()
 scan->start(0, nullptr, false);    // Arduino 4: scan.start(0) / scan.startExtended(...)
 ```
 
@@ -219,8 +232,18 @@ scan->start(0, nullptr, false);    // Arduino 4: scan.start(0) / scan.startExten
   only for Bluedroid, so the scan is legacy only.
 - **Heap peak:** during a client session with Wi-Fi scan, the lowest free heap
   was about 16 KiB below idle (Arduino 3).
-- **`end()`:** `end()` shuts down the whole BLE stack, so it also stops the
-  application's scanner. Don't use it in this setup.
+- **Stopping Improv:** `end()` shuts down the whole BLE stack, so it also
+  stops the application's scanner. Use `stop()` instead. Measured with
+  [`stop_test.cpp`](examples/heap-footprint/src/stop_test.cpp): five
+  stop/restart cycles while the application scans, then the BLE tests pass,
+  and a client disconnect afterwards doesn't crash the device. This holds on
+  both chips and both cores.
+
+| Application scanning | C6, Arduino 3.3.12 | C6, Arduino 4.0.0-RC1 | S3, Arduino 3.3.12 | S3, Arduino 4.0.0-RC1 |
+| --- | ---: | ---: | ---: | ---: |
+| heap used while Improv runs | 14.0 KiB | 14.0 KiB | 12.1 KiB | 11.9 KiB |
+| returned by `stop()` | 7.9 KiB | 11.8 KiB | 7.9 KiB | 9.2 KiB |
+| lost per stop/restart cycle | none | ~1.2 KiB | none | ~0.9 KiB |
 
 ## Documentation
 

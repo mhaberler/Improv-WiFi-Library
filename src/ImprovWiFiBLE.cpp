@@ -27,20 +27,10 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
                                   const char *firmwareVersion,
                                   const char *deviceName,
                                   const char *deviceUrl) {
-    if (server_) return; // already initialized
-#if defined(CONFIG_NIMBLE_ENABLED)
-    // Creating the GATT server resets NimBLE's GATT table, which asserts
-    // (ble_svc_gap_init) while the application is scanning. Refuse instead.
-#ifdef IMPROV_BLE_V4
-    const bool scanning = BLE.isInitialized() && BLE.getScan().isScanning();
-#else
-    const bool scanning = BLEDevice::getInitialized() && BLEDevice::getScan()->isScanning();
-#endif
-    if (scanning) {
-        log_e("BLE scan active: stop it before setDeviceInfo(), restart it after");
+    if (running_) return;
+    if (appScanning("setDeviceInfo")) {
         return;
     }
-#endif
     chip_ = chipFamily;
     firmware_name_ = firmwareName ? firmwareName : "";
     firmware_version_ = firmwareVersion ? firmwareVersion : "";
@@ -69,7 +59,7 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     server_.advertiseOnDisconnect(false); // advertiseNow() restarts with current state
     server_.onDisconnect([this](const BLEServer &, const BLEConnInfo &, uint8_t) {
         rx_.clear();
-        if (adv_) {
+        if (adv_ && running_) {
             advertiseNow();
         }
     });
@@ -112,6 +102,11 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
         adv_.setScanResponseData(scan);
     }
 #else
+    if (service_) {
+        // restart after stop(): reuse the registered service (no GATT change)
+        ch_error_->setValue(&error_, 1);
+        ch_state_->setValue(&state_, 1);
+    } else {
     // Initialize BLE and set up the Improv service
     BLEDevice::init(device_name_.c_str());
 #if defined(ESP_PWR_LVL_P9)
@@ -161,8 +156,10 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
         scan.setName(device_name_.c_str());
         adv_->setScanResponseData(scan);
     }
+    }
 #endif
 
+    running_ = true;
     advertiseNow();
 }
 
@@ -210,15 +207,15 @@ bool ImprovWiFiBLE::tryConnectToWifi(const char *ssid, const char *password,
     return (WiFi.status() == WL_CONNECTED);
 }
 
-void ImprovWiFiBLE::end(bool releaseMemory) {
+bool ImprovWiFiBLE::stopWorker(const char *caller) {
     if (rpc_task_ && xTaskGetCurrentTaskHandle() == rpc_task_) {
-        log_e("end() called from an Improv callback; call it from loop()");
-        return;
+        log_e("%s() called from an Improv callback; call it from loop()", caller);
+        return false;
     }
     if (adv_) {
         deref(adv_).stop();
     }
-    // Stop the worker: it finishes the RPC in progress, then exits.
+    // The worker finishes the RPC in progress, then exits.
     if (rpc_task_) {
         static RpcPacket stop;
         stop.len = RPC_STOP;
@@ -227,6 +224,58 @@ void ImprovWiFiBLE::end(bool releaseMemory) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
+    return true;
+}
+
+// Adding or removing GATT services resets NimBLE's GATT table, which asserts
+// (ble_svc_gap_init) while the application is scanning.
+bool ImprovWiFiBLE::appScanning(const char *caller) {
+#if defined(CONFIG_NIMBLE_ENABLED)
+#ifdef IMPROV_BLE_V4
+    const bool scanning = BLE.isInitialized() && BLE.getScan().isScanning();
+#else
+    const bool scanning = BLEDevice::getInitialized() && BLEDevice::getScan()->isScanning();
+#endif
+    if (scanning) {
+        log_e("BLE scan active: stop it before %s(), restart it after", caller);
+        return true;
+    }
+#endif
+    return false;
+}
+
+void ImprovWiFiBLE::stop() {
+    if (appScanning("stop") || !stopWorker("stop")) {
+        return;
+    }
+    running_ = false;
+#ifdef IMPROV_BLE_V4
+    if (service_) {
+        server_.removeService(service_);
+        service_ = BLEService();
+        ch_state_ = BLECharacteristic();
+        ch_error_ = BLECharacteristic();
+        ch_rpc_cmd_ = BLECharacteristic();
+        ch_rpc_res_ = BLECharacteristic();
+        ch_caps_ = BLECharacteristic();
+    }
+#endif
+    // Arduino 3: the service stays registered (see header); writes to it are
+    // dropped while stopped (no RPC queue).
+    if (rpc_queue_) {
+        vQueueDelete(rpc_queue_);
+        rpc_queue_ = nullptr;
+    }
+    std::vector<uint8_t>().swap(rx_);
+    state_ = STATE_AUTHORIZED;
+    error_ = ERR_NONE;
+}
+
+void ImprovWiFiBLE::end(bool releaseMemory) {
+    if (!stopWorker("end")) {
+        return;
+    }
+    running_ = false;
     if (server_) {
 #ifdef IMPROV_BLE_V4
         BLE.end(releaseMemory);
@@ -256,7 +305,7 @@ void ImprovWiFiBLE::end(bool releaseMemory) {
 }
 
 bool ImprovWiFiBLE::isAdvertising() {
-    return (server_ && service_ && adv_); // espressif Nimble in Arduino lacks isAdvertising()
+    return running_; // espressif Nimble in Arduino lacks isAdvertising()
 }
 
 bool ImprovWiFiBLE::isConnected() {
@@ -268,7 +317,7 @@ bool ImprovWiFiBLE::isConnected() {
 
 void ImprovWiFiBLE::onDisconnect(BLEServer *) {
     rx_.clear();
-    if (adv_) {
+    if (adv_ && running_) {
         advertiseNow();
     }
 }

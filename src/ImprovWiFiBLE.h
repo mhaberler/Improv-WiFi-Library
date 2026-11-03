@@ -98,6 +98,16 @@ public:
   // Call from loop()/setup(), not from an Improv callback.
   void end(bool releaseMemory = false);
 
+  // Stop Improv only, keep the BLE stack running (for applications that use
+  // BLE themselves, e.g. scanning): stops advertising and ends the RPC worker.
+  // Arduino 4 also removes the Improv GATT service. Arduino 3 keeps it
+  // registered and reuses it, because removing a service there triggers a GATT
+  // reset on the next disconnect, which asserts while the app scans.
+  // setDeviceInfo() starts Improv again.
+  // Like setDeviceInfo(), refuses while a BLE scan runs: pause it around the call.
+  // Call from loop()/setup(), not from an Improv callback.
+  void stop();
+
 #ifndef IMPROV_BLE_V4
   // BLEServerCallbacks
   void onDisconnect(BLEServer *s) override;
@@ -202,6 +212,7 @@ private:
 
   // state
   uint8_t state_{STATE_AUTHORIZED};
+  bool running_{false}; // setDeviceInfo() succeeded, not stopped/ended
   uint8_t error_{ERR_NONE};
   uint8_t caps_{ImprovTypes::CAPABILITY_IDENTIFY | ImprovTypes::CAPABILITY_DEVICE_INFO |
                 ImprovTypes::CAPABILITY_WIFI_SCAN};
@@ -222,6 +233,8 @@ private:
   TaskHandle_t rpc_task_{nullptr}; // cleared by the task when it exits
   static constexpr uint16_t RPC_STOP = 0xFFFF; // RpcPacket.len: worker exits
   static void rpcTask(void *arg);
+  bool stopWorker(const char *caller); // false if called on the worker itself
+  static bool appScanning(const char *caller); // true (and logs) if a scan runs
 #ifdef IMPROV_BLE_V4
   uint16_t peer_mtu_{23}; // captured from BLEConnInfo on write
 #endif
