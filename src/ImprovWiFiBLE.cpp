@@ -469,11 +469,10 @@ void ImprovWiFiBLE::rpcSendWifi(const uint8_t *p, size_t n) {
         return;
     }
 
-    // Success path
-    if (onImprovConnectedCallback_) {
-        onImprovConnectedCallback_(ssid.c_str(), pass.c_str());
-    }
-
+    // Success path. Same order as the serial transport: report the URL (built
+    // from the IP we have right now) before the application callback, which
+    // may reconfigure Wi-Fi (e.g. reconnect) and drop the IP to 0.0.0.0.
+    //
     // Send device URL BEFORE the PROVISIONED state: sdk-ble-js re-renders its
     // success screen on the state change only, so a URL arriving afterwards
     // never shows up as the "Next" button.
@@ -483,6 +482,10 @@ void ImprovWiFiBLE::rpcSendWifi(const uint8_t *p, size_t n) {
     advertiseNow();
 
     delay(250); // allow clients to read updated chars
+
+    if (onImprovConnectedCallback_) {
+        onImprovConnectedCallback_(ssid.c_str(), pass.c_str());
+    }
 }
 
 void ImprovWiFiBLE::rpcIdentify() {
