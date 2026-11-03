@@ -28,6 +28,19 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
                                   const char *deviceName,
                                   const char *deviceUrl) {
     if (server_) return; // already initialized
+#if defined(CONFIG_NIMBLE_ENABLED)
+    // Creating the GATT server resets NimBLE's GATT table, which asserts
+    // (ble_svc_gap_init) while the application is scanning. Refuse instead.
+#ifdef IMPROV_BLE_V4
+    const bool scanning = BLE.isInitialized() && BLE.getScan().isScanning();
+#else
+    const bool scanning = BLEDevice::getInitialized() && BLEDevice::getScan()->isScanning();
+#endif
+    if (scanning) {
+        log_e("BLE scan active: stop it before setDeviceInfo(), restart it after");
+        return;
+    }
+#endif
     chip_ = chipFamily;
     firmware_name_ = firmwareName ? firmwareName : "";
     firmware_version_ = firmwareVersion ? firmwareVersion : "";

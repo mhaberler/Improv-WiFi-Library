@@ -180,6 +180,48 @@ BLE is started (`setDeviceInfo()`), advertises for 3 s, then is stopped with
   closed with `end()`, free heap stays below a firmware without BLE by about
   31 KiB on the C6 and about 26.5 KiB on the S3.
 
+### Improv next to an application BLE scanner
+
+The application already runs the BLE stack with a continuous passive scan,
+and Improv is started on top. Measured on the ESP32-S3 with
+[`scan.cpp`](examples/heap-footprint/src/scan.cpp) (Arduino 3.3.12) and
+[`scan_v4.cpp`](examples/heap-footprint/src/scan_v4.cpp) (Arduino 4.0.0-RC1).
+
+| Phase | S3 free heap, Arduino 3.3.12 | S3 free heap, Arduino 4.0.0-RC1 |
+| --- | ---: | ---: |
+| Wi-Fi only (BLE linked, not started) | 236,672 | 242,328 |
+| application scanning | 163,372 | 152,332 |
+| scanning + Improv advertising | 150,388 | 141,144 |
+| Improv's own cost | 12.7 KiB | 10.9 KiB |
+
+**Start Improv only while no scan is running.** Creating Improv's GATT server
+resets NimBLE's GATT table, which fails during a scan with
+`assert failed: ble_svc_gap_init` and makes the device reboot in a loop.
+`setDeviceInfo()` therefore refuses to start while a scan is active: it logs
+an error, and `isAdvertising()` stays false. Pause the scan around the start
+and resume it with your own parameters:
+
+```cpp
+scan->stop();                      // Arduino 4: scan.stop() / scan.stopExtended()
+improvBLE.setDeviceInfo(IMPROV_CHIP_FAMILY, "fw", "1.0", "My Device");
+scan->start(0, nullptr, false);    // Arduino 4: scan.start(0) / scan.startExtended(...)
+```
+
+- Improv's own cost is only 11 to 13 KiB, because the application already
+  pays for the stack. Scanning keeps running alongside Improv, and the BLE
+  tests pass while the device scans.
+- **Extended (BLE 5) scanning:** Arduino 4's prebuilt NimBLE has extended
+  advertising and scanning enabled (`CONFIG_BT_NIMBLE_EXT_ADV=y`,
+  `CONFIG_BT_NIMBLE_EXT_SCAN=y`). An extended scan on the Coded and 1M PHYs
+  (`scan.startExtended()`) works alongside Improv. Improv's own advertisement
+  still reaches Improv clients, with the same heap figures. In Arduino 3.3.12,
+  extended advertising is off, and the BLE library offers extended scanning
+  only for Bluedroid, so the scan is legacy only.
+- **Heap peak:** during a client session with Wi-Fi scan, the lowest free heap
+  was about 16 KiB below idle (Arduino 3).
+- **`end()`:** `end()` shuts down the whole BLE stack, so it also stops the
+  application's scanner. Don't use it in this setup.
+
 ## Documentation
 
 - Serial transport: [ImprovWiFiLibrary](docs/ImprovWiFiLibrary.md)
