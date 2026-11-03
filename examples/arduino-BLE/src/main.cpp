@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <Esp.h>
 #include <ImprovWiFiBLE.h>
+#include <ImprovWiFiLibrary.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include "credstore.hpp"
@@ -11,6 +12,7 @@
 
 WiFiServer server(80);
 ImprovWiFiBLE improvBLE;
+ImprovWiFi improvSerial(&Serial);  // Improv over USB serial, always active
 static wl_status_t wifiStatus = WL_NO_SHIELD; // status tracking
 
 char linebuf[80];
@@ -62,6 +64,10 @@ void startImprovProvisioning() {
 
 void setup() {
     Serial.begin(115200);
+    improvSerial.onImprovError(onImprovWiFiErrorCb);
+    improvSerial.onImprovConnected(onImprovWiFiConnectedCb);
+    improvSerial.setCustomConnectWiFi(connectWifi);
+    improvSerial.setDeviceInfo(IMPROV_CHIP_FAMILY, "My-Device-9a4c2b", "2.1.5", "My Device");
     // pinMode(LED_BLUE, OUTPUT);
     buttonSetup();
 
@@ -81,6 +87,7 @@ void setup() {
 
 void loop() {
     buttonCheck();
+    improvSerial.handleSerial();
 
     static wl_status_t wifiStatus = WL_NO_SHIELD;
     wl_status_t s = WiFi.status();

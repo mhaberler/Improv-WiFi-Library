@@ -72,10 +72,14 @@ void loop() {
 
 ### Configuring a BLE Device
 
-Provisioning happens from a browser over Web Bluetooth at
-[improv-wifi.com](https://www.improv-wifi.com/). Open the page, click
-**Connect device to Wi-Fi**, pick the advertised device, enter SSID and
-password.
+Provisioning happens from a browser over Web Bluetooth. Use this
+library's [provisioning page](https://mhaberler.github.io/Improv-WiFi-Library/)
+(source in [web/](web/)): click the Bluetooth button, pick the advertised
+device, choose a network from the scan list and enter the password. It shows
+device info and scanned networks, which the client currently deployed at
+[improv-wifi.com](https://www.improv-wifi.com/) does not yet support (there,
+SSID must be typed). The same page has a USB serial button for the Serial
+transport.
 
 Browsers tested:
 
@@ -83,7 +87,7 @@ Browsers tested:
 - **Chrome on Android** — works out of the box.
 - **iOS / iPadOS** — Safari and Chrome do **not** expose Web Bluetooth.
   Use the [Bluefy browser](https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055)
-  and open improv-wifi.com inside it.
+  and open the provisioning page inside it.
 
 ### Using both Serial and BLE:
 

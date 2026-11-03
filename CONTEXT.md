@@ -24,3 +24,7 @@ The RPC Result describing the device: firmware name, firmware version, chip fami
 
 **Chip Family**:
 The ESP chip variant reported in Device Info (e.g. `ESP32-S3`), normally derived from the build target.
+
+**Provisioning Page**:
+The browser app (in `web/`, published on GitHub Pages) a user opens to provision a device over BLE or USB serial. Hosts the Improv web clients.
+_Avoid_: web app, portal
