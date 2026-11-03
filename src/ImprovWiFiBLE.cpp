@@ -35,6 +35,15 @@ void ImprovWiFiBLE::setDeviceInfo(ImprovTypes::ChipFamily chipFamily,
     device_friendly_name_ = deviceName ? deviceName : "";
     device_url_ = deviceUrl ? deviceUrl : "";
 
+    if (!rpc_queue_) {
+        rpc_queue_ = xQueueCreate(2, sizeof(RpcPacket));
+        if (!rpc_queue_ ||
+            xTaskCreate(rpcTask, "improv_rpc", 6144, this, 1, nullptr) != pdPASS) {
+            log_e("failed to start Improv RPC task");
+            return;
+        }
+    }
+
 #ifdef IMPROV_BLE_V4
     BTStatus st = BLE.begin(device_name_);
     if (!st) {
@@ -234,9 +243,32 @@ void ImprovWiFiBLE::onRpcWrite(const uint8_t *data, size_t len) {
     if (rx_.size() < expected) {
         return; // wait for more
     }
-    std::vector<uint8_t> packet;
-    packet.swap(rx_);
-    handleRpc(packet.data(), packet.size()); // size mismatch -> bad packet
+    // size mismatch -> bad packet, reported by handleRpc
+    static RpcPacket pkt; // only touched from the BLE callback context
+    pkt.len = std::min(rx_.size(), sizeof(pkt.data));
+    memcpy(pkt.data, rx_.data(), pkt.len);
+    if (rx_.size() > sizeof(pkt.data)) {
+        pkt.len = 0; // can't be valid (len byte max 255)
+    }
+    rx_.clear();
+    if (xQueueSend(rpc_queue_, &pkt, 0) != pdTRUE) {
+        log_w("RPC dropped, worker busy");
+    }
+}
+
+void ImprovWiFiBLE::rpcTask(void *arg) {
+    auto *self = static_cast<ImprovWiFiBLE *>(arg);
+    RpcPacket pkt;
+    for (;;) {
+        if (xQueueReceive(self->rpc_queue_, &pkt, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (pkt.len < 3) {
+            self->reportError(ERR_BAD_PACKET, ImprovTypes::Error::ERROR_INVALID_RPC);
+            continue;
+        }
+        self->handleRpc(pkt.data, pkt.len);
+    }
 }
 
 // ==== internal helpers / RPCs ====
@@ -375,7 +407,7 @@ static const char *authName(wifi_auth_mode_t m) {
 }
 
 void ImprovWiFiBLE::rpcScanNetworks() {
-    // Blocking scan (~2-4 s), like the blocking connect in rpcSendWifi.
+    // Blocking scan (~2-4 s); runs on the RPC worker task.
     int n = WiFi.scanNetworks();
     if (n == WIFI_SCAN_FAILED) {
         // driver refuses to scan while a connect attempt is in progress;

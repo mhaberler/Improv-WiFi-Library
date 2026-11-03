@@ -44,10 +44,10 @@ bool connectWifi(const char *ssid, const char *password) {
 
     WiFi.begin(ssid, password);
 
-    while (!improvBLE.isConnected()) {
+    for (int i = 0; i < 20 && !improvBLE.isConnected(); i++) {  // ~20 s
         blinkLed(500, 1);
     }
-    return true;
+    return improvBLE.isConnected();
 }
 
 void startImprovProvisioning() {

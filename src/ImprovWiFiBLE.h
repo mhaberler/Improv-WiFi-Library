@@ -5,6 +5,10 @@
 
 #include "ImprovTypes.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #endif
@@ -198,6 +202,17 @@ private:
   // RPC command reassembly
   std::vector<uint8_t> rx_;
   uint32_t rx_last_ms_{0};
+
+  // RPCs run on a worker task, not in the BLE write callback: the write is
+  // acknowledged before the RPC result is notified (Web Bluetooth rejects the
+  // client's next write otherwise), and slow RPCs (scan, connect) don't stall
+  // the BLE stack.
+  struct RpcPacket {
+    uint16_t len;
+    uint8_t data[2 + 255 + 1]; // cmd + len + payload + checksum
+  };
+  QueueHandle_t rpc_queue_{nullptr};
+  static void rpcTask(void *arg);
 #ifdef IMPROV_BLE_V4
   uint16_t peer_mtu_{23}; // captured from BLEConnInfo on write
 #endif
