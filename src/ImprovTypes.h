@@ -72,7 +72,13 @@ enum ChipFamily : uint8_t {
   CF_ESP32_C6,
   CF_ESP32_S2,
   CF_ESP32_S3,
-  CF_ESP8266
+  CF_ESP8266,
+  CF_ESP32_C2,
+  CF_ESP32_C5,
+  CF_ESP32_C61,
+  CF_ESP32_H2,
+  CF_ESP32_P4,
+  CF_COUNT
 };
 
 struct ImprovWiFiParamsStruct {
@@ -84,4 +90,31 @@ struct ImprovWiFiParamsStruct {
 };
 
 
-} 
+}
+
+// Chip family of the build target. Projects may predefine to override.
+#ifndef IMPROV_CHIP_FAMILY
+#if defined(ESP8266)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP8266
+#elif defined(CONFIG_IDF_TARGET_ESP32C2)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_C2
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_C3
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_C5
+#elif defined(CONFIG_IDF_TARGET_ESP32C6)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_C6
+#elif defined(CONFIG_IDF_TARGET_ESP32C61)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_C61
+#elif defined(CONFIG_IDF_TARGET_ESP32H2)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_H2
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_P4
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_S2
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32_S3
+#else
+#define IMPROV_CHIP_FAMILY ImprovTypes::CF_ESP32
+#endif
+#endif
